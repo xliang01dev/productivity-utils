@@ -18,6 +18,11 @@ A macOS shell script to connect or disconnect an iPad as a Sidecar display from 
 
 ## Usage
 
+Grant script permissions
+```bash
+chmod 755 ipad_screen_mirror.sh
+```
+
 ```bash
 ./ipad_screen_mirror.sh -c   # Connect iPad as Sidecar display
 ./ipad_screen_mirror.sh -d   # Disconnect iPad Sidecar display
