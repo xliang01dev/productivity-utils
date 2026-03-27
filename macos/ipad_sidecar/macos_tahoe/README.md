@@ -15,6 +15,12 @@ A macOS shell script to connect or disconnect an iPad as a Sidecar display from 
 ./ipad_screen_mirror.sh -d   # Disconnect iPad Sidecar display
 ```
 
+Alias it:
+```bash
+alias mirror = "./ipad_screen_mirror.sh -c"
+alias disconnect = "./ipad_screen_mirror.sh -d"
+```
+
 ## Requirements
 
 - macOS with Sidecar support
