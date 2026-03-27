@@ -12,20 +12,23 @@ A macOS shell script to connect or disconnect an iPad as a Sidecar display from 
 
 ## Usage
 
-Grant script permissions
+1. Clone repo with shell script and apple script files.
+
+2. Grant script permissions
 ```bash
 chmod 755 ipad_screen_mirror.sh
 ```
 
+3. Run it
 ```bash
 ./ipad_screen_mirror.sh -c   # Connect iPad as Sidecar display
 ./ipad_screen_mirror.sh -d   # Disconnect iPad Sidecar display
 ```
 
-Alias it:
+4 Alias it:
 ```bash
-alias mirror = "./ipad_screen_mirror.sh -c"
-alias disconnect = "./ipad_screen_mirror.sh -d"
+alias mirror = "./path_to_script/ipad_screen_mirror.sh -c"
+alias disconnect = "./path_to_script/ipad_screen_mirror.sh -d"
 ```
 
 ## Files
