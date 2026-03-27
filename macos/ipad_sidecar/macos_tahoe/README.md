@@ -20,6 +20,7 @@ A macOS shell script to connect or disconnect an iPad as a Sidecar display from 
 - macOS with Sidecar support
 - iPad connected via Bluetooth (the script auto-detects the iPad name)
 - Accessibility permissions granted to Terminal (or whichever app runs the script) under **System Settings → Privacy & Security → Accessibility**
+- The **Screen Mirroring** icon must be set to **Always Show** in the menu bar: **System Settings → Menu Bar → Screen Mirroring → Always Show in Menu Bar**
 
 ## Notes
 
