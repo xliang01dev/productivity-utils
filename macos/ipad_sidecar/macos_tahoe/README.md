@@ -2,7 +2,6 @@
 
 A macOS shell script to connect or disconnect an iPad as a Sidecar display from the command line.
 
-
 ## Requirements
 
 - macOS Tahoe
@@ -10,32 +9,32 @@ A macOS shell script to connect or disconnect an iPad as a Sidecar display from 
 - Accessibility permissions granted to Terminal (or whichever app runs the script) under **System Settings → Privacy & Security → Accessibility**
 - The **Screen Mirroring** icon must be set to **Always Show** in the menu bar: **System Settings → Menu Bar → Screen Mirroring → Always Show in Menu Bar**
 
-## Usage
-
-1. Clone repo with shell script and apple script files.
-
-2. Grant script permissions
-```bash
-chmod 755 ipad_screen_mirror.sh
-```
-
-3. Run it
-```bash
-./ipad_screen_mirror.sh -c   # Connect iPad as Sidecar display
-./ipad_screen_mirror.sh -d   # Disconnect iPad Sidecar display
-```
-
-4 Alias it:
-```bash
-alias mirror = "./path_to_script/ipad_screen_mirror.sh -c"
-alias disconnect = "./path_to_script/ipad_screen_mirror.sh -d"
-```
-
 ## Files
 
-- `ipad_screen_mirror.sh` — Main script; detects the iPad via Bluetooth and invokes the appropriate AppleScript.
-- `connect_sidecar.scpt` — AppleScript that clicks through Control Center to enable screen mirroring to the iPad.
-- `disconnect_sidecar.scpt` — AppleScript that clicks through Control Center to disconnect the Sidecar display.
+- `toggle_ipad_sidecar.sh` — Main script; detects the iPad via Bluetooth and invokes the appropriate AppleScript.
+- `enable_ipad_sidecar.scpt` — AppleScript that clicks through Control Center to enable Sidecar to the iPad.
+- `disable_ipad_sidecar.scpt` — AppleScript that clicks through Control Center to disconnect the Sidecar display.
+
+## Usage
+
+1. Clone repo with shell script and AppleScript files.
+
+2. Grant script permissions:
+```bash
+chmod 755 toggle_ipad_sidecar.sh
+```
+
+3. Run it:
+```bash
+./toggle_ipad_sidecar.sh -c   # Connect iPad as Sidecar display
+./toggle_ipad_sidecar.sh -d   # Disconnect iPad Sidecar display
+```
+
+4. Alias it:
+```bash
+alias sideon="./path_to_script/toggle_ipad_sidecar.sh -c"
+alias sideoff="./path_to_script/toggle_ipad_sidecar.sh -d"
+```
 
 ## Notes
 

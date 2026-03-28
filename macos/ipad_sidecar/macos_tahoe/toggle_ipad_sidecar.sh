@@ -12,12 +12,12 @@ usage() {
 while getopts "cd" opt; do
     case $opt in
         c)
-            echo "Connecting iPad \"$IPAD_NAME\" as Sidecar display"
-            osascript "$(dirname "$0")/connect_sidecar.scpt"
+            echo "Enable iPad \"$IPAD_NAME\" as sidecar display"
+            osascript "$(dirname "$0")/enable_ipad_sidecar.scpt" "$IPAD_NAME"
             ;;
         d)
-            echo "Disconnecting iPad \"$IPAD_NAME\" Sidecar display"
-            osascript "$(dirname "$0")/disconnect_sidecar.scpt"
+            echo "Disable iPad \"$IPAD_NAME\" as sidecar display"
+            osascript "$(dirname "$0")/disable_ipad_sidecar.scpt"
             ;;
         *)
             usage
