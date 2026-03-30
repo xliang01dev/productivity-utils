@@ -12,7 +12,7 @@ A macOS shell script to connect or disconnect an iPad as a Sidecar display from 
 ## Files
 
 - `toggle_ipad_sidecar.sh` — Main script; detects the iPad via Bluetooth and invokes the appropriate AppleScript.
-- `enable_ipad_sidecar.scpt` — AppleScript that clicks through Control Center to enable Sidecar to the iPad.
+- `enable_ipad_sidecar.scpt` — AppleScript that clicks through System Settings and Display to enable Sidecar to the iPad.
 - `disable_ipad_sidecar.scpt` — AppleScript that clicks through Control Center to disconnect the Sidecar display.
 
 ## Usage
