@@ -6,21 +6,10 @@ Create a SwiftBar widget that shows key metrics on token usage and cost for dail
 
 # Menu behavior
 When menu is closed the following metrics are displayed on the menu bar:
-cc: #k(#%), cr: #k(#%), in #k(#%), out #k(#%), t: $#
+CL-Tok: #.#k $#.##
 
-- Daily cost for today
-- cc: created cache input token count displayed as K for today
-- cr: cached input token count displayed as K for today
-- in: non-cached input token displayed as K for today
-- out: output tokens displayed as K for today
-- t: total cost for all tokens used that day
-
-Display usage has % kpis, which is based on ratio of the total tokens
-- total = cc + cr + in + out
-- cc% = cc / total
-- cr% = cr / total
-- in% = in / total
-- out% = out / total
+- Total token count for today displayed with K (thousands) or M (millions) suffix
+- Total cost for all tokens used today, formatted as $#.##
 
 Refer to [Get usage data for today](#get-usage-data-for-today)
 
