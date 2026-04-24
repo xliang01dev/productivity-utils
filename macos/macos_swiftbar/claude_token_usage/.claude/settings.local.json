@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mkdir -p /Volumes/Files/Development/Scripts/productivity-utils/macos/macos_swiftbar/claude_token_usage/.claude/memories)",
+      "Bash(mkdir -p /Volumes/Files/Development/Scripts/productivity-utils/macos/macos_swiftbar/claude_token_usage/.claude/tasks)"
+    ]
+  }
+}
