@@ -1,6 +1,18 @@
 # Claude Token Usage — SwiftBar Widget
 
 A macOS menu bar widget that tracks your daily Claude token usage and estimated inference costs, updated every minute.
+Useful to estimate Claude API costs through Claude Pro and Claude Max.
+
+## Why use this?
+
+Claude's web and desktop interfaces don't show token counts or cost breakdowns in real time. If you're a heavy user on Claude Pro or Max, it can be hard to know how much of your context budget you're burning — or whether a heavy agentic session is costing significantly more than a typical day.
+
+This widget gives you:
+
+- **Instant visibility** — cost and token count always visible in your menu bar, no app switching required
+- **Daily spend awareness** — see at a glance if today is trending higher than usual
+- **Token type breakdown** — understand the split between cache reads, cache creates, input, and output so you can reason about where cost is coming from
+- **7-day trend** — spot patterns across the week, not just the current session
 
 ## What it shows
 
@@ -21,6 +33,14 @@ A macOS menu bar widget that tracks your daily Claude token usage and estimated 
 
 ## Install
 
+**1. Install Homebrew** (skip if already installed):
+
+```bash
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+```
+
+**2. Install dependencies:**
+
 ```bash
 brew install --cask swiftbar
 brew install ccusage
@@ -30,12 +50,14 @@ brew install jq
 Or run the included setup script:
 
 ```bash
-bash setup_with_brew.sh
+chmod +x setup_with_brew.sh
+./setup_with_brew.sh
 ```
 
 ## Add to SwiftBar
 
-1. Open SwiftBar — it will prompt you to choose a **plugin folder** (a directory SwiftBar watches for scripts)
+1. Open SwiftBar — it will prompt you to choose a **plugin folder** (a directory SwiftBar watches for scripts).
+   Already running? Find the folder via **⚡ menu → Open Plugin Folder**.
 2. Copy or symlink the script into that folder:
    ```bash
    cp src/claude_token_usage.1m.sh ~/path/to/swiftbar/plugins/
