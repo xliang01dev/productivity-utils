@@ -3,6 +3,8 @@
 A macOS menu bar widget that tracks your daily Claude token usage and estimated inference costs, updated every minute.
 Useful to estimate Claude API costs through Claude Pro and Claude Max.
 
+<img width="376" height="436" alt="Screenshot 2026-04-24 at 11 33 51 PM" src="https://github.com/user-attachments/assets/213afac9-3381-420e-9b8c-49096743bf77" />
+
 ## Why use this?
 
 Claude's web and desktop interfaces don't show token counts or cost breakdowns in real time. If you're a heavy user on Claude Pro or Max, it can be hard to know how much of your context budget you're burning — or whether a heavy agentic session is costing significantly more than a typical day.
