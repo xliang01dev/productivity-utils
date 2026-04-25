@@ -166,7 +166,6 @@ update_rolling_csv() {
   echo "$ROLLING_HEADER" > "$tmp"
 
   range_tsv=$(fetch_ccusage_for_range "$fetch_since" "$fetch_today")
-  all_fresh=""
   [ -n "$range_tsv" ] && all_fresh=$(printf '%s\n' "$range_tsv" | _calc_metrics_from_range_tsv)
 
   for i in 0 1 2 3 4 5 6; do
@@ -252,10 +251,6 @@ format_cost() {
     }'
 }
 
-sum_cost() {
-  awk -v a="${1:-0}" -v b="${2:-0}" -v c="${3:-0}" -v d="${4:-0}" \
-    'BEGIN { printf "%.10f", a + b + c + d }'
-}
 
 # ── rendering ─────────────────────────────────────────────────────────────────
 
@@ -352,8 +347,14 @@ main() {
   update_rolling_csv || { echo "Data update failed"; echo "---"; echo "Check $LOG"; exit 0; }
 
   read_rolling_metrics
-  TODAY_COST=$(sum_cost "${TODAY_CC_COST:-0}" "${TODAY_CR_COST:-0}" "${TODAY_IN_COST:-0}" "${TODAY_OUT_COST:-0}")
-  WEEK_COST=$(sum_cost "${WEEK_CC_COST:-0}"   "${WEEK_CR_COST:-0}"  "${WEEK_IN_COST:-0}"  "${WEEK_OUT_COST:-0}")
+  local cost_pair
+  cost_pair=$(awk -v ta="${TODAY_CC_COST:-0}" -v tb="${TODAY_CR_COST:-0}" \
+                  -v tc="${TODAY_IN_COST:-0}" -v td="${TODAY_OUT_COST:-0}" \
+                  -v wa="${WEEK_CC_COST:-0}"  -v wb="${WEEK_CR_COST:-0}" \
+                  -v wc="${WEEK_IN_COST:-0}"  -v wd="${WEEK_OUT_COST:-0}" \
+                  'BEGIN{printf "%.10f %.10f", ta+tb+tc+td, wa+wb+wc+wd}')
+  TODAY_COST="${cost_pair% *}"
+  WEEK_COST="${cost_pair#* }"
   local tok_pair
   tok_pair=$(awk -v ta="${TODAY_CC_C:-0}" -v tb="${TODAY_CR_C:-0}" \
                  -v tc="${TODAY_IN_C:-0}" -v td="${TODAY_OUT_C:-0}" \
