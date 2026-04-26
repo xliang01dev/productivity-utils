@@ -23,6 +23,10 @@ When menu is open, the following charts and metrics are shown:
     - in: input token count displayed as K for today | aggregate input token count for all past 7 days including today
     - out: output token count displayed as K for today | aggregate output token count for all past 7 days including today
 
+- A table that has 2 columns (no headers), as it uses headers from the cost table above.
+    - [Cache Hit Rate](#cache-hit-rate) for today | Cache hit rate for all past 7 days
+    - [I/O ratio](#io-ratio) for today | I/O ratio for all past 7 days
+
 ## Model Pricing Data
 Run the following only if price/model_prices_and_context_window.json does not exist, or has not been updated in the past 24 hours 
 ```bash
@@ -130,3 +134,20 @@ ccusage daily --order desc --since "$LAST_7_DAYS" --mode=display --json --breakd
     - total_output_cost = outputTokens * output_cost_per_token
 4. Insert costs into rolling 7 day metrics, using rules from [metrics storage rules](#metrics-storage-rules)
     - Ensure all columns are present
+
+# Calculate Token Usage Efficiency
+
+The following formulas define 3 different metrics for efficiency:
+
+## Cache Hit Rate ##
+Measures how effectively you're reusing cached content and is the single strongest predictor of cost efficiency. Target 60%+ for good performance, with 70-90% indicating excellent caching strategy.
+
+Cache Hit Rate = Cache Read Tokens / (Cache Write Tokens + Cache Read Tokens) x 100
+
+## I/O Ratio ##
+This efficiency metric reveals your workload's fundamental cost structure and guides optimization strategy. Ratios >10:1 suggest focusing on input optimization (caching, context trimming), while ratios <5:1 indicate output reduction should be prioritized.
+
+I/O Ratio = (Input Tokens + Cache Read Tokens) / Output Tokens
+​
+
+ 

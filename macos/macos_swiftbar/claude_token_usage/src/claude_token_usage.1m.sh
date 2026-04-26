@@ -251,11 +251,49 @@ format_cost() {
     }'
 }
 
+format_hit_rate() {
+  awk -v cr="${1:-0}" -v cc="${2:-0}" 'BEGIN {
+    d = cr + cc
+    if (d == 0) { printf "N/A"; exit }
+    printf "%.1f%%", (cr / d) * 100
+  }'
+}
+
+format_io_ratio() {
+  awk -v i="${1:-0}" -v cr="${2:-0}" -v o="${3:-0}" 'BEGIN {
+    if (o == 0) { printf "N/A"; exit }
+    printf "%.1fx", (i + cr) / o
+  }'
+}
+
+# cache hit rate: <0-40% red, 40-70% orange, ≥70% green; empty if no data
+_hit_rate_color() {
+  awk -v cr="${1:-0}" -v cc="${2:-0}" 'BEGIN {
+    d = cr + cc; if (d == 0) exit
+    p = (cr / d) * 100
+    if (p >= 70) print "green"
+    else if (p >= 40) print "orange"
+    else print "red"
+  }'
+}
+
+# i/o ratio: <5 red, 5-10 green, >10 orange; empty if no data
+_io_ratio_color() {
+  awk -v i="${1:-0}" -v cr="${2:-0}" -v o="${3:-0}" 'BEGIN {
+    if (o == 0) exit
+    r = (i + cr) / o
+    if (r >= 300) print "#FFD700"
+    else if (r >= 50) print "#34C759"
+    else if (r >= 20) print "orange"
+    else print "red"
+  }'
+}
 
 # ── rendering ─────────────────────────────────────────────────────────────────
 
 render_bar_chart() {
-  tail -n +2 "$ROLLING_CSV" | awk -F',' -v w=20 -v sf="$SF" "$_AWK_COMMIFY$_AWK_FORMAT"'
+  local SF_CHART="$SF color=#B7470A"
+  tail -n +2 "$ROLLING_CSV" | awk -F',' -v w=20 -v sf="$SF_CHART" "$_AWK_COMMIFY$_AWK_FORMAT"'
     {
       rows[NR] = $1
       tok[NR]  = $2+0+$4+0+$6+0+$8+0
@@ -318,13 +356,29 @@ render_dropdown() {
   local c2=$(( max_t + 3 + max_ct ))
   local c3=$(( max_w + 3 + max_cw ))
 
-  local fmt='%-*s  %-*s  %-*s %s\n'
+  local fmt='%-*s   %-*s   %-*s %s\n'
+  local SF_TOKEN_COUNT="$SF color=#1F5C99"
+  local SF_TOTAL="$SF color=#B7470A"
   printf "$fmt" "$c1" ""             "$c2" "Today"                                                   "$c3" "Last 7 Days"                                                    "$SF"
-  printf "$fmt" "$c1" "Cache read"   "$c2" "$(printf "%-${max_t}s" "$tk_cr_t") ($ck_cr_t)"   "$c3" "$(printf "%-${max_w}s" "$tk_cr_w") ($ck_cr_w)"   "$SF"
-  printf "$fmt" "$c1" "Cache create" "$c2" "$(printf "%-${max_t}s" "$tk_cc_t") ($ck_cc_t)"   "$c3" "$(printf "%-${max_w}s" "$tk_cc_w") ($ck_cc_w)"   "$SF"
-  printf "$fmt" "$c1" "Input token"  "$c2" "$(printf "%-${max_t}s" "$tk_in_t") ($ck_in_t)"   "$c3" "$(printf "%-${max_w}s" "$tk_in_w") ($ck_in_w)"   "$SF"
-  printf "$fmt" "$c1" "Output token" "$c2" "$(printf "%-${max_t}s" "$tk_out_t") ($ck_out_t)" "$c3" "$(printf "%-${max_w}s" "$tk_out_w") ($ck_out_w)" "$SF"
-  printf "$fmt" "$c1" "Total"        "$c2" "$(printf "%-${max_t}s" "$tk_tot_t") ($ck_tot_t)" "$c3" "$(printf "%-${max_w}s" "$tk_tot_w") ($ck_tot_w)" "$SF"
+  printf "$fmt" "$c1" "Total"        "$c2" "$(printf "%-${max_t}s" "$tk_tot_t") ($ck_tot_t)" "$c3" "$(printf "%-${max_w}s" "$tk_tot_w") ($ck_tot_w)" "$SF_TOTAL"
+  printf "$fmt" "$c1" "Cache read"   "$c2" "$(printf "%-${max_t}s" "$tk_cr_t") ($ck_cr_t)"   "$c3" "$(printf "%-${max_w}s" "$tk_cr_w") ($ck_cr_w)"   "$SF_TOKEN_COUNT"
+  printf "$fmt" "$c1" "Cache create" "$c2" "$(printf "%-${max_t}s" "$tk_cc_t") ($ck_cc_t)"   "$c3" "$(printf "%-${max_w}s" "$tk_cc_w") ($ck_cc_w)"   "$SF_TOKEN_COUNT"
+  printf "$fmt" "$c1" "Input token"  "$c2" "$(printf "%-${max_t}s" "$tk_in_t") ($ck_in_t)"   "$c3" "$(printf "%-${max_w}s" "$tk_in_w") ($ck_in_w)"   "$SF_TOKEN_COUNT"
+  printf "$fmt" "$c1" "Output token" "$c2" "$(printf "%-${max_t}s" "$tk_out_t") ($ck_out_t)" "$c3" "$(printf "%-${max_w}s" "$tk_out_w") ($ck_out_w)" "$SF_TOKEN_COUNT"
+  echo "---"
+
+  local eff_chr_t eff_chr_w eff_ior_t eff_ior_w
+  eff_chr_t=$(format_hit_rate "${TODAY_CR_C:-0}" "${TODAY_CC_C:-0}")
+  eff_chr_w=$(format_hit_rate "${WEEK_CR_C:-0}"  "${WEEK_CC_C:-0}")
+  eff_ior_t=$(format_io_ratio "${TODAY_IN_C:-0}" "${TODAY_CR_C:-0}" "${TODAY_OUT_C:-0}")
+  eff_ior_w=$(format_io_ratio "${WEEK_IN_C:-0}"  "${WEEK_CR_C:-0}" "${WEEK_OUT_C:-0}")
+  local chr_color ior_color chr_sf ior_sf
+  chr_color=$(_hit_rate_color "${TODAY_CR_C:-0}" "${TODAY_CC_C:-0}")
+  ior_color=$(_io_ratio_color "${TODAY_IN_C:-0}" "${TODAY_CR_C:-0}" "${TODAY_OUT_C:-0}")
+  chr_sf="$SF${chr_color:+ color=$chr_color}"
+  ior_sf="$SF${ior_color:+ color=$ior_color}"
+  printf "$fmt" "$c1" "Cache hit"  "$c2" "$eff_chr_t" "$c3" "$eff_chr_w" "$chr_sf"
+  printf "$fmt" "$c1" "I/O ratio"  "$c2" "$eff_ior_t" "$c3" "$eff_ior_w" "$ior_sf"
 }
 
 # ── main ──────────────────────────────────────────────────────────────────────
