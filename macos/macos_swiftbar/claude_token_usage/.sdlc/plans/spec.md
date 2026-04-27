@@ -1,164 +1,356 @@
 ## Outcome ##
-Create a SwiftBar widget that shows key metrics on token usage and cost for daily Claude usage.
+Create a SwiftBar plugin (bash script) that shows key metrics on Claude token usage and estimated inference cost for the current day.
+
+---
+
+## Project Layout
+
+```
+<repo-root>/
+├── src/
+│   └── claude_token_usage.1m.sh   ← the SwiftBar plugin script
+├── price/
+│   ├── model_prices_and_context_window.json
+│   └── claude_model_prices.csv
+└── data/
+    ├── rolling_metrics_7_days.csv
+    └── widget.log
+```
+
+The script resolves its own directory at runtime (`SCRIPT_DIR`) and derives all paths relative to it:
+- `PRICE_DIR = $SCRIPT_DIR/../price`
+- `DATA_DIR  = $SCRIPT_DIR/../data`
+
+---
+
+## SwiftBar Plugin Requirements
+
+The script must begin with these SwiftBar metadata directives:
+```bash
+#!/bin/bash
+# <swiftbar.hideAbout>true</swiftbar.hideAbout>
+# <swiftbar.hideRunInTerminal>true</swiftbar.hideRunInTerminal>
+# <swiftbar.hideLastUpdated>true</swiftbar.hideLastUpdated>
+# <swiftbar.hideDisablePlugin>false</swiftbar.hideDisablePlugin>
+# <swiftbar.hideSwiftBar>false</swiftbar.hideSwiftBar>
+```
+
+SwiftBar attribute syntax: append `| key=value key2=value2` to any output line.
+- The first line of output becomes the menu bar text.
+- A line containing only `---` is a separator; everything after it appears in the dropdown.
+- Multiple `---` lines create visual separators within the dropdown.
+
+PATH must be exported early so that `ccusage`, `jq`, and `curl` are found on macOS:
+```bash
+export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+```
+
+Enable strict error handling:
+```bash
+set -euo pipefail
+```
+
+All error paths must still `exit 0` (not non-zero) so SwiftBar renders the error text rather than showing an error badge.
+
+### macOS-specific commands
+This script targets macOS exclusively (SwiftBar is macOS-only). Use macOS BSD variants:
+- File mtime: `stat -f %m "$file"` (Linux equivalent would be `stat -c %Y`)
+- Date arithmetic: `date -v-Nd +%Y%m%d` for N days ago (Linux: `date -d "N days ago" +%Y%m%d`)
+
+### Defensive variable defaults
+With `set -u` active, all shell variable references used in arithmetic or passed to external commands must use `${var:-0}` (or `${var:-}`) to avoid unbound variable errors. Apply this consistently to all metric variables (`TODAY_*`, `WEEK_*`) at their point of use.
+
+---
 
 ## Configuration
-- Refresh interval: configurable via the script filename (SwiftBar convention). Default is 1 minute (e.g. `claude_token_usage.1m.sh`).
+- Refresh interval: encoded in the filename per SwiftBar convention. Default: `claude_token_usage.1m.sh` (1 minute).
 
-# Menu behavior
-When menu is closed the following metrics are displayed on the menu bar:
-CL-Tok: #.#k $#.##
+---
 
-- Total token count for today displayed with K (thousands) or M (millions) suffix
-- Total cost for all tokens used today, formatted as $#.##
+## Number Formatting
 
-Refer to [Get usage data for today](#get-usage-data-for-today)
+### Token counts (`format_k`)
+- ≥ 1,000,000 → `#.#m` (1 decimal rounded half-up, lowercase `m`, comma thousands separator on the integer part). Example: `1,234,567` → `1.2m`
+- ≥ 500 → rounded to nearest thousand (half-up), lowercase `k`, comma thousands separator. Example: `750` → `1k`, `15,300` → `15k`, `1,500,000` → `1,500k` is wrong — millions rule takes precedence
+- < 500 → raw integer. Example: `42` → `42`
+- K values are never shown with a decimal — always integers
 
-When menu is open, the following charts and metrics are shown:
-- Bar graph (generated from ascii text) showing daily cost and total token count for each of the past 7 days. Each bar row shows: `MM/DD ████░░░░ $cost  tokens`
+### Costs (`format_cost`)
+- Format: `$#,###.##` (always 2 decimal places, comma thousands separator, cents rounded half-up)
+- Carry propagation: if rounded cents reach 100, increment dollars. Example: `$0.999` → `$1.00`
+- Example: `1234.5` → `$1,234.50`
 
-- A table with 3 columns: a row label, a "Today" column, and a "Last 7 Days" column. Each data cell shows `token_count (cost)` where token_count uses K/M suffix formatting.
-    - Total: sum of all token types for today | aggregate for past 7 days
-    - Cache read: cached read token count and cost for today | aggregate for past 7 days
-    - Cache create: cache creation token count and cost for today | aggregate for past 7 days
-    - Input token: input token count and cost for today | aggregate for past 7 days
-    - Output token: output token count and cost for today | aggregate for past 7 days
+### Efficiency display formats
+- Cache Hit Rate: `%.1f%%` — 1 decimal place followed by `%`. Example: `72.3%`
+- I/O Ratio: `%.1fx` — 1 decimal place followed by `x`. Example: `14.7x`
+- Both display `N/A` (no color) when the denominator is zero
 
-- A separator, then two efficiency rows sharing the same column widths as the table above (no repeated header):
-    - Cache hit: [Cache Hit Rate](#cache-hit-rate) for today | Cache hit rate for all past 7 days
-    - I/O ratio: [I/O ratio](#io-ratio) for today | I/O ratio for all past 7 days
+---
+
+## Display — Fonts and Colors
+
+### SwiftBar font string constant
+Define once and reuse:
+```bash
+SF="| font=Menlo size=11 trim=false"
+```
+Append to every dropdown output line.
+
+### Menu bar
+- Font size: `size=12` (no Menlo, no trim)
+
+### Table row colors (appended after `$SF`)
+| Row | Color |
+|-----|-------|
+| Bar chart rows | `#B7470A` |
+| Table header (Today / Last 7 Days) | no color (default) |
+| Total row | `#B7470A` |
+| Cache read / Cache create / Input token / Output token | `#1F5C99` |
+| Cache hit rate | dynamic — see [Cache Hit Rate](#cache-hit-rate) |
+| I/O ratio | dynamic — see [I/O Ratio](#io-ratio) |
+
+---
+
+## Menu Behavior
+
+### Menu bar (closed state)
+```
+CL-Tok: <tokens> <cost> | size=12
+```
+- `<tokens>`: sum of all 4 token types (cache create + cache read + input + output) for today, formatted with `format_k`
+- `<cost>`: sum of all 4 cost types for today, formatted with `format_cost`
+
+### Dropdown (open state)
+
+#### 1. Bar chart
+Read directly from `data/rolling_metrics_7_days.csv` (skip the header row). One row per day for the past 7 days, today first (descending). For each CSV row, compute:
+- `tok  = col2 + col4 + col6 + col8` (in_count + cc_count + cr_count + out_count)
+- `cost = col3 + col5 + col7 + col9` (in_cost + cc_cost + cr_cost + out_cost)
+
+Format per row:
+```
+MM/DD <bar><trailing> <right-aligned-cost>  <left-aligned-tokens> | font=Menlo size=11 trim=false color=#B7470A
+```
+- `MM/DD`: month and day extracted from the stored `YYYY-MM-DD` date
+- `<bar>`: exactly 20 characters of `█` (filled) and `░` (empty), where `filled = int(cost / max_cost * 20 + 0.5)` (round-half-up); if `max_cost == 0` treat as 1 to avoid division by zero
+- `<trailing>`: 3 additional `░` characters appended after the 20-char bar
+- One space between `MM/DD` and the bar; one space between bar and cost
+- Cost: right-aligned to the width of the longest cost label across all 7 rows
+- Two spaces between cost and tokens
+- Tokens: left-aligned to the width of the longest token label across all 7 rows
+
+#### 2. `---` separator
+
+#### 3. Metrics table
+Column layout (printf `%-*s   %-*s   %-*s %s\n` — 3 spaces between each column):
+- Column 1: row label, left-aligned to 13 characters
+- Column 2 (Today): cell content is `token_count (cost)` — token count **left-aligned** (right-padded with spaces) to `max_today_tok_width`, then the literal ` (`, then the cost string, then `)`. The cost is **not** independently padded; the outer `%-*s` left-aligns the whole cell to column width = `max_today_tok_width + 3 + max_today_cost_width` (the `+3` accounts for ` (` and `)`)
+- Column 3 (Last 7 Days): same structure, widths from weekly maxima
+
+Header row (no color):
+```
+             Today                    Last 7 Days
+```
+
+Data rows:
+
+| Label (13 chars) | Today cell | Last 7 Days cell |
+|---|---|---|
+| `Total` | all-type token sum + all-type cost | weekly aggregates |
+| `Cache read` | cache read tokens + cost | weekly |
+| `Cache create` | cache creation tokens + cost | weekly |
+| `Input token` | input tokens + cost | weekly |
+| `Output token` | output tokens + cost | weekly |
+
+Row colors: Total = `#B7470A`, all others = `#1F5C99`.
+
+#### 4. `---` separator
+
+#### 5. Efficiency rows
+Same column widths as the metrics table above. No repeated header.
+
+| Label (13 chars) | Today | Last 7 Days |
+|---|---|---|
+| `Cache hit` | cache hit rate | weekly cache hit rate |
+| `I/O ratio` | I/O ratio | weekly I/O ratio |
+
+Colors: dynamic per thresholds (based on today's values for both columns' color).
+
+---
 
 ## Model Pricing Data
-Run the following only if price/model_prices_and_context_window.json does not exist, or has not been updated in the past 24 hours 
+
+### Fetch condition
+Re-fetch `model_prices_and_context_window.json` if any of the following are true:
+- File does not exist
+- File mtime is older than 86400 seconds (24 hours)
+- File exists but `claude_model_prices.csv` is missing or empty
+
+### Download
+Use an atomic write (download to `.tmp`, then `mv` on success):
 ```bash
-curl -L https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json -o price/model_prices_and_context_window.json
+curl -sL --max-time 10 \
+  https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json \
+  -o "$PRICE_JSON.tmp"
+mv "$PRICE_JSON.tmp" "$PRICE_JSON"
+```
+On curl failure: log the error, remove the `.tmp` file, and return failure.
+
+### Extract to CSV
+Delete the old CSV, then write fresh:
+```bash
+rm -f "$PRICE_CSV"
+jq -r '
+  to_entries[]
+  | select(.key | startswith("claude"))
+  | [.key,
+     (.value.cache_creation_input_token_cost // 0),
+     (.value.cache_read_input_token_cost // 0),
+     (.value.input_cost_per_token // 0),
+     (.value.output_cost_per_token // 0)]
+  | @csv
+' "$PRICE_JSON" > "$PRICE_CSV"
+```
+`// 0` guards against null fields. If the jq step fails, delete the partial CSV and return failure.
+
+CSV column order: `model_name, cache_creation_cost, cache_read_cost, input_cost, output_cost`
+
+---
+
+## Metrics Storage
+
+### File: `data/rolling_metrics_7_days.csv`
+Header (row 0):
+```
+date,total_input_count,total_input_cost,total_cache_created_count,total_cache_created_cost,total_cache_read_count,total_cache_read_cost,total_output_count,total_output_cost
 ```
 
-Extract the model costs using:
-```bash
-    jq -r '
-    to_entries[]
-    | select(.key | startswith("claude"))
-    | [.key,
-       .value.cache_creation_input_token_cost,
-       .value.cache_read_input_token_cost,
-       .value.input_cost_per_token,
-       .value.output_cost_per_token]
-    | @csv
-    ' model_prices_and_context_window.json > ./price/claude_model_prices.csv
+Cost values are stored with 10 decimal places (`%.10f`) to preserve precision across aggregation.
+Dates are stored as `YYYY-MM-DD`.
+
+### Update logic (runs every refresh)
+
+1. Determine `fetch_since`: start with today. Walk back days 1–6; for **every** day not present in the existing CSV (or if the CSV doesn't exist), update `fetch_since` to that day. Do **not** stop early — iterate all 6 days so that `fetch_since` ends up set to the **oldest** missing day, not merely the first one found.
+2. Fetch all ccusage data from `fetch_since` to today in a single call (see [Get data for a date range](#get-data-for-a-date-range)).
+3. Calculate per-day metrics from the fetched TSV (see [Calculate actual price](#calculate-actual-price)).
+4. Rebuild the CSV from scratch, writing a fresh header, then one row per day for `i = 0..6` (today to 6 days ago):
+   - **Today (i=0)**: use fresh-calculated row if available; else use cached row from old CSV; else write a zero row.
+   - **Past days (i=1–6)**: use cached row from old CSV if available (past data does not change); else use fresh-calculated row if available; else write a zero row.
+5. Discard any rows older than 7 days (the rebuild loop naturally enforces this).
+
+### Zero row format
 ```
-and write to /price/claude_model_prices.csv. Remove the older .csv file if it exists.
+YYYY-MM-DD,0,0.0000000000,0,0.0000000000,0,0.0000000000,0,0.0000000000
+```
 
-## Metrics Storage Rules
-Metrics are stored in a rolling log file in data/rolling_metrics_7_days.csv that can store up to 7 days of data.
-`rolling_metrics_7_days.csv` should contain the following columns on row 0:
-- date
-- total_input_count,
-- total_input_cost,
-- total_cache_created_count,
-- total_cache_created_cost,
-- total_cache_read_count,
-- total_cache_read_cost,
-- total_output_count,
-- total_output_cost
+---
 
-Values in the csv are calcuated using numbers from `ccusage` and `model_prices_and_context_window.json`
-- `ccusage` is used for aggregating token counts, NOT pricing
-- `pricing` per model is determined by downloading and parsing model_prices_and_context_window.json
-- Rules on how to calculate is listed under [How to Calculate](#How-to-Calculate-Model-Cost)
+## ccusage Commands
 
-data/rolling_metrics_7_days.csv is either generated or updated with the following rules:
-- Dates are sorted in descending order
-- If file does not exist, calculate all 7 days and generate file
-- If file already exists, check if there are gaps between the most recent date (top line) and today. Fill missing gaps by calculating each missing day using ccusage and `claude_model_prices.csv`. For example, if the top line indicates 3 days ago, calculate and insert rows for each of the 3 missing days until the top is today. Days with no ccusage data are inserted with zero counts and costs.
-- If all 7 days exist and the top line matches today, just update this line with newly calculated metrics for the day
-- Any dates that is older than 7 days are discarded
+### Get data for a date range
+```bash
+ccusage daily --since "$SINCE" --until "$UNTIL" --mode=display --json --breakdown \
+  | jq -r '
+      .daily // []
+      | .[]
+      | (.date | gsub("-"; "")) as $date
+      | .modelBreakdowns // []
+      | .[]
+      | [$date, .modelName,
+         (.inputTokens // 0), (.outputTokens // 0),
+         (.cacheCreationTokens // 0), (.cacheReadTokens // 0)]
+      | @tsv
+    ' 2>/dev/null || true
+```
+Output TSV columns: `YYYYMMDD, modelName, inputTokens, outputTokens, cacheCreationTokens, cacheReadTokens`
+
+---
+
+## Calculate Actual Price
+
+Process the ccusage TSV through awk:
+
+1. Load `claude_model_prices.csv` into lookup arrays keyed by model name (strip surrounding quotes from the model name field).
+2. For each TSV row, multiply:
+   - `input_cost    = inputTokens          * input_cost_per_token`
+   - `cc_cost       = cacheCreationTokens  * cache_creation_cost`
+   - `cr_cost       = cacheReadTokens      * cache_read_cost`
+   - `output_cost   = outputTokens         * output_cost_per_token`
+3. Accumulate per date across all model rows.
+4. Output one CSV row per date (sorted by whatever order awk iterates — the rebuild loop handles ordering):
+   ```
+   YYYY-MM-DD,in_count,in_cost,cc_count,cc_cost,cr_count,cr_cost,out_count,out_cost
+   ```
+   with costs formatted as `%.10f`.
+
+If a model name is not found in the pricing lookup, log a warning to `data/widget.log` and treat its costs as 0. Log each unknown model name **at most once per run** (deduplicate warnings within the same awk pass).
+
+---
+
+## Read Rolling Metrics
+
+After rebuilding the CSV, read it in a single awk pass (skip header row):
+- Row 1 (today): extract all 8 metric fields as today's values.
+- All rows: accumulate sums for the 7-day weekly totals.
+
+Expose as shell variables:
+```
+TODAY_IN_C, TODAY_IN_COST, TODAY_CC_C, TODAY_CC_COST
+TODAY_CR_C, TODAY_CR_COST, TODAY_OUT_C, TODAY_OUT_COST
+WEEK_IN_C,  WEEK_IN_COST,  WEEK_CC_C,  WEEK_CC_COST
+WEEK_CR_C,  WEEK_CR_COST,  WEEK_OUT_C, WEEK_OUT_COST
+```
+
+Then compute totals via awk (to preserve floating-point precision):
+```
+TODAY_COST = TODAY_CC_COST + TODAY_CR_COST + TODAY_IN_COST + TODAY_OUT_COST
+WEEK_COST  = WEEK_CC_COST  + WEEK_CR_COST  + WEEK_IN_COST  + WEEK_OUT_COST
+TODAY_TOK  = TODAY_CC_C + TODAY_CR_C + TODAY_IN_C + TODAY_OUT_C
+WEEK_TOK   = WEEK_CC_C  + WEEK_CR_C  + WEEK_IN_C  + WEEK_OUT_C
+```
+
+---
+
+## Calculate Token Usage Efficiency
+
+### Cache Hit Rate
+```
+Cache Hit Rate = Cache Read Tokens / (Cache Read Tokens + Cache Write Tokens) × 100
+```
+Display: `%.1f%%` (e.g. `72.3%`). Display `N/A` when `(cache_read + cache_write) == 0`.
+
+Color thresholds (applied to the row):
+- ≥ 70% → `green`
+- ≥ 40% → `orange`
+- < 40% → `red`
+- Zero denominator → no color
+
+### I/O Ratio
+```
+I/O Ratio = (Input Tokens + Cache Read Tokens) / Output Tokens
+```
+Display: `%.1fx` (e.g. `14.7x`). Display `N/A` when `output == 0`.
+
+Color thresholds:
+- ≥ 300x → `#FFD700` (gold)
+- ≥ 50x  → `#34C759` (green)
+- ≥ 20x  → `orange`
+- < 20x  → `red`
+- Zero denominator → no color
+
+---
 
 ## Error Handling
-- If `ccusage` fails or returns no data: Use last known metrics from rolling CSV file. If no historical data exists, fill the row with zero counts and costs (widget shows `$0.00`)
-- If pricing file is missing or corrupted: Display error state in the widget and skip metrics calculation until file is repaired or re-downloaded
-- If a model returned by ccusage is not found in `claude_model_prices.csv`: Log a warning and treat that model's cost as 0
 
-### How to Calculate Model Cost ###
+| Condition | Menu bar output | Dropdown output | Script exit |
+|-----------|----------------|-----------------|-------------|
+| Pricing download fails | `Pricing data unavailable` | `Failed to download or parse pricing data. Check $LOG` | `exit 0` |
+| Pricing CSV missing or empty | `Pricing data unavailable` | `claude_model_prices.csv is missing or empty` | `exit 0` |
+| `update_rolling_csv` fails | `Data update failed` | `Check $LOG` | `exit 0` |
+| Model not in pricing CSV | *(no effect on display)* | *(warning logged to `data/widget.log`)* | continues |
 
-**Multi-model Aggregation**
-- The total token cost per day is the sum of all token types across all models used
-- The total tokens per day is the sum of all token types across all models used
+All error exits use `exit 0` so SwiftBar renders the text output rather than an error badge.
 
-# Get usage data for today
-```bash
-TODAY=$(date +%Y%m%d)
-ccusage daily --since "$TODAY" --until "$TODAY" --mode=display --json --breakdown | jq '
-    .daily // []
-    | .[]
-    | .date as $date
-    | .modelBreakdowns // []
-    | .[]
-    | {
-        date: $date,
-        modelName,
-        inputTokens,
-        outputTokens,
-        cacheCreationTokens,
-        cacheReadTokens
-      }
-  '
-```
-
-# Get data for past 7 days
-```bash
-LAST_7_DAYS=$(date -v-6d +%Y%m%d)
-ccusage daily --order desc --since "$LAST_7_DAYS" --mode=display --json --breakdown | jq '
-    .daily // []
-    | .[]
-    | .date as $date
-    | .modelBreakdowns // []
-    | .[]
-    | {
-        date: $date,
-        modelName,
-        inputTokens,
-        outputTokens,
-        cacheCreationTokens,
-        cacheReadTokens
-      }
-  '
-```
-
-# Calculate actual price
-1. Parse the cost values per model from `/price/claude_model_prices.csv` into a dictionary
-2. Get usage data from [today](#get-usage-data-for-today) or [past 7 days](#get-data-for-past-7-days) and parse as `dictionary`
-3. Multiply to get the following cost:
-    - total_cache_created_cost = cacheCreationTokens * cache_creation_input_token_cost
-    - total_cache_read_cost = cacheReadTokens * cache_read_input_token_cost
-    - total_input_cost = inputTokens * input_cost_per_token
-    - total_output_cost = outputTokens * output_cost_per_token
-4. Insert costs into rolling 7 day metrics, using rules from [metrics storage rules](#metrics-storage-rules)
-    - Ensure all columns are present
-
-# Calculate Token Usage Efficiency
-
-The following formulas define 3 different metrics for efficiency:
-
-## Cache Hit Rate ##
-Measures how effectively you're reusing cached content and is the single strongest predictor of cost efficiency. Target 60%+ for good performance, with 70-90% indicating excellent caching strategy.
-
-Cache Hit Rate = Cache Read Tokens / (Cache Write Tokens + Cache Read Tokens) x 100
-
-Color thresholds:
-- ≥ 70% → green
-- ≥ 40% → orange
-- < 40% → red
-
-## I/O Ratio ##
-This efficiency metric reveals your workload's fundamental cost structure and guides optimization strategy.
-
-I/O Ratio = (Input Tokens + Cache Read Tokens) / Output Tokens
-
-Color thresholds:
-- ≥ 300x → gold (`#FFD700`)
-- ≥ 50x  → green (`#34C759`)
-- ≥ 20x  → orange
-- < 20x  → red
-​
-
- 
+### Log file
+- Path: `data/widget.log`
+- Rotated to the last 500 lines on every run (before any other operations), using an atomic `tail → .tmp → mv` pattern. Rotation errors are silently ignored (`2>/dev/null || true`).
