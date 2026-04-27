@@ -14,18 +14,18 @@ CL-Tok: #.#k $#.##
 Refer to [Get usage data for today](#get-usage-data-for-today)
 
 When menu is open, the following charts and metrics are shown:
-- Bar graph (generated from ascii text) on daily cost for all tokens used in the past 7 days
+- Bar graph (generated from ascii text) showing daily cost and total token count for each of the past 7 days. Each bar row shows: `MM/DD ████░░░░ $cost  tokens`
 
-- A table that has 2 columns with 2 headers: (Today, Last 7 Days)
-    - Daily cost of all tokens for today with | total cost of all tokens in the past 7 days
-    - cc: created cache input token count displayed as K for today | aggregate created cache input token for all past 7 days including today
-    - cr: cached token count displayed as K for today | aggregate cached token count for all past 7 days including today
-    - in: input token count displayed as K for today | aggregate input token count for all past 7 days including today
-    - out: output token count displayed as K for today | aggregate output token count for all past 7 days including today
+- A table with 3 columns: a row label, a "Today" column, and a "Last 7 Days" column. Each data cell shows `token_count (cost)` where token_count uses K/M suffix formatting.
+    - Total: sum of all token types for today | aggregate for past 7 days
+    - Cache read: cached read token count and cost for today | aggregate for past 7 days
+    - Cache create: cache creation token count and cost for today | aggregate for past 7 days
+    - Input token: input token count and cost for today | aggregate for past 7 days
+    - Output token: output token count and cost for today | aggregate for past 7 days
 
-- A table that has 2 columns (no headers), as it uses headers from the cost table above.
-    - [Cache Hit Rate](#cache-hit-rate) for today | Cache hit rate for all past 7 days
-    - [I/O ratio](#io-ratio) for today | I/O ratio for all past 7 days
+- A separator, then two efficiency rows sharing the same column widths as the table above (no repeated header):
+    - Cache hit: [Cache Hit Rate](#cache-hit-rate) for today | Cache hit rate for all past 7 days
+    - I/O ratio: [I/O ratio](#io-ratio) for today | I/O ratio for all past 7 days
 
 ## Model Pricing Data
 Run the following only if price/model_prices_and_context_window.json does not exist, or has not been updated in the past 24 hours 
@@ -74,7 +74,7 @@ data/rolling_metrics_7_days.csv is either generated or updated with the followin
 - Any dates that is older than 7 days are discarded
 
 ## Error Handling
-- If `ccusage` fails or returns no data: Display last known metrics from rolling CSV file. If no historical data exists, display "No data available"
+- If `ccusage` fails or returns no data: Use last known metrics from rolling CSV file. If no historical data exists, fill the row with zero counts and costs (widget shows `$0.00`)
 - If pricing file is missing or corrupted: Display error state in the widget and skip metrics calculation until file is repaired or re-downloaded
 - If a model returned by ccusage is not found in `claude_model_prices.csv`: Log a warning and treat that model's cost as 0
 
@@ -144,10 +144,21 @@ Measures how effectively you're reusing cached content and is the single stronge
 
 Cache Hit Rate = Cache Read Tokens / (Cache Write Tokens + Cache Read Tokens) x 100
 
+Color thresholds:
+- ≥ 70% → green
+- ≥ 40% → orange
+- < 40% → red
+
 ## I/O Ratio ##
-This efficiency metric reveals your workload's fundamental cost structure and guides optimization strategy. Ratios >10:1 suggest focusing on input optimization (caching, context trimming), while ratios <5:1 indicate output reduction should be prioritized.
+This efficiency metric reveals your workload's fundamental cost structure and guides optimization strategy.
 
 I/O Ratio = (Input Tokens + Cache Read Tokens) / Output Tokens
+
+Color thresholds:
+- ≥ 300x → gold (`#FFD700`)
+- ≥ 50x  → green (`#34C759`)
+- ≥ 20x  → orange
+- < 20x  → red
 ​
 
  
