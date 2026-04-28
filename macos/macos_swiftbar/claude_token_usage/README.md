@@ -3,7 +3,7 @@
 A macOS menu bar widget that tracks your daily Claude token usage and estimated inference costs, updated every minute.
 Useful to estimate Claude API costs through Claude Pro and Claude Max.
 
-<img width="376" height="436" alt="Screenshot 2026-04-24 at 11 33 51 PM" src="https://github.com/user-attachments/assets/213afac9-3381-420e-9b8c-49096743bf77" />
+<img width="433" height="495" alt="CL-Tok" src="https://github.com/user-attachments/assets/56027734-b990-4aec-9e98-d69341d50238" />
 
 ## Why use this?
 
