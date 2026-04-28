@@ -9,8 +9,9 @@ export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PRICE_DIR="$SCRIPT_DIR/../price"
-DATA_DIR="$SCRIPT_DIR/../data"
+BASE_DIR="${SWIFTBAR_PLUGIN_DATA_PATH:-$SCRIPT_DIR}/claude_token_usage"
+PRICE_DIR="$BASE_DIR/price"
+DATA_DIR="$BASE_DIR/data"
 PRICE_JSON="$PRICE_DIR/model_prices_and_context_window.json"
 PRICE_CSV="$PRICE_DIR/claude_model_prices.csv"
 ROLLING_CSV="$DATA_DIR/rolling_metrics_7_days.csv"
