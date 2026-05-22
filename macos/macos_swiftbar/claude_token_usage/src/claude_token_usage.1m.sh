@@ -87,15 +87,13 @@ fetch_pricing_if_stale() {
 # fetch_ccusage_for_range <since_YYYYMMDD> <until_YYYYMMDD>
 # outputs TSV: YYYYMMDD\tmodelName\tinputTokens\toutputTokens\tcacheCreationTokens\tcacheReadTokens
 fetch_ccusage_for_range() {
-  ccusage daily --since "$1" --until "$2" --mode=display --json --breakdown 2>/dev/null \
+  ccusage daily --since "$1" --until "$2" --json 2>/dev/null \
     | jq -r '
         .daily // []
         | .[]
-        | (.date | gsub("-"; "")) as $date
-        | .modelBreakdowns // []
-        | .[]
+        | (.period | gsub("-"; "")) as $date
         | [$date,
-           .modelName,
+           (.modelsUsed[0] // "unknown"),
            (.inputTokens // 0),
            (.outputTokens // 0),
            (.cacheCreationTokens // 0),
@@ -166,6 +164,7 @@ update_rolling_csv() {
 
   echo "$ROLLING_HEADER" > "$tmp"
 
+  all_fresh=""
   range_tsv=$(fetch_ccusage_for_range "$fetch_since" "$fetch_today")
   [ -n "$range_tsv" ] && all_fresh=$(printf '%s\n' "$range_tsv" | _calc_metrics_from_range_tsv)
 
