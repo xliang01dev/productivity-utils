@@ -1,2 +1,4 @@
 .claude/tasks
 .claude/settings.local.json
+*/claude_token_usage/data
+*/claude_token_usage/price
