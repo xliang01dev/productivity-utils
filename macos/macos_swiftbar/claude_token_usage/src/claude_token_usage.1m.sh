@@ -92,8 +92,9 @@ fetch_ccusage_for_range() {
         .daily // []
         | .[]
         | (.period | gsub("-"; "")) as $date
+        | (.modelBreakdowns // [])[]
         | [$date,
-           (.modelsUsed[0] // "unknown"),
+           (.modelName // "unknown"),
            (.inputTokens // 0),
            (.outputTokens // 0),
            (.cacheCreationTokens // 0),
