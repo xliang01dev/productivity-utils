@@ -106,20 +106,20 @@ Tunable values are variables in the `# ── config ──` section at the top 
 | `LABEL_WIDTH` | `13` | Width of the label column in the dropdown |
 | `PRICE_TTL` | `86400` | Seconds before the price file is refreshed |
 | `PRICE_URL` | litellm price list | Source of model prices |
-| `HIT_RATE_ORANGE`, `HIT_RATE_GREEN` | `40`, `70` | Cache hit rate percent where the color turns orange and green |
-| `IO_RATIO_ORANGE`, `IO_RATIO_GREEN`, `IO_RATIO_GOLD` | `20`, `50`, `300` | I/O ratio where the color turns orange, green and gold |
+| `HIT_RATE_ORANGE`, `HIT_RATE_GREEN` | `70`, `90` | Cache hit rate percent where the color turns orange and green |
+| `IO_RATIO_ORANGE`, `IO_RATIO_GREEN`, `IO_RATIO_OVERSIZED` | `50`, `100`, `300` | I/O ratio where the color turns orange, green, and back to orange for an oversized context |
 
 ## Metrics Goals
 
 The dropdown colors each metric by these cutoffs, which are set in the config section.
 
-| Metric | Red | Orange | Green | Gold |
-|---|---|---|---|---|
-| **Cache hit rate** | < 40% | 40% to 70% | ≥ 70% | n/a |
-| **I/O ratio** | < 20:1 | 20:1 to 50:1 | 50:1 to 300:1 | ≥ 300:1 |
+| Metric | Target (green) | Orange | Red |
+|---|---|---|---|
+| **Cache hit rate** | ≥ 90% | 70% to 90% | < 70% |
+| **I/O ratio** | 100:1 to 300:1 | 50:1 to 100:1, and ≥ 300:1 (oversized) | < 50:1 |
 
-**Cache hit rate** measures what fraction of your cache-eligible tokens were served from cache rather than reprocessed. At ≥ 70%, the bulk of your context is reused across turns, which directly lowers cost — cached reads are 10× to 20× cheaper than regular input tokens, depending on the model.
+**Cache hit rate** measures what fraction of your cache-eligible tokens were served from cache rather than reprocessed. At ≥ 90%, the bulk of your context is reused across turns, which directly lowers cost — cached reads are 10× to 20× cheaper than regular input tokens, depending on the model.
 
-**I/O ratio** is (input + cache read tokens) ÷ output tokens. Output tokens are the most expensive, so a high ratio — 50:1 or above — means you're getting focused responses from a well-cached context, which is the most cost-efficient operating point. Below 20:1, output is dominating and cost rises fast.
+**I/O ratio** is (input + cache read tokens) ÷ output tokens. Output tokens are the most expensive, so a high ratio — 100:1 or above — means you're getting focused responses from a well-cached context, which is the most cost-efficient operating point. Below 50:1, output is dominating and cost rises fast.
 
-At 300:1 and above, the widget shows the ratio in gold.
+Above 300:1, the ratio flips to a different problem: the context window is oversized. You're paying for more cached input than the task needs — trimming prompts would reduce cost without sacrificing output quality. The widget shows this in orange.

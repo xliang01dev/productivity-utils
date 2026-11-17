@@ -15,11 +15,11 @@ BAR_WIDTH=20          # width of each bar in the chart
 LABEL_WIDTH=13        # width of the label column in the dropdown
 PRICE_TTL=86400       # seconds before the price file is refreshed
 PRICE_URL="https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"
-HIT_RATE_ORANGE=40    # cache hit rate percent: below red, from here orange
-HIT_RATE_GREEN=70     # cache hit rate percent: from here green
-IO_RATIO_ORANGE=20    # I/O ratio: below red, from here orange
-IO_RATIO_GREEN=50     # I/O ratio: from here green
-IO_RATIO_GOLD=300     # I/O ratio: from here gold
+HIT_RATE_ORANGE=70    # cache hit rate percent: below red, from here orange
+HIT_RATE_GREEN=90     # cache hit rate percent: from here green
+IO_RATIO_ORANGE=50    # I/O ratio: below red, from here orange
+IO_RATIO_GREEN=100    # I/O ratio: from here green
+IO_RATIO_OVERSIZED=300 # I/O ratio: from here orange again, the context is oversized
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BASE_DIR="${SWIFTBAR_PLUGIN_DATA_PATH:-$SCRIPT_DIR}/claude_token_usage"
@@ -218,13 +218,14 @@ _hit_rate_color() {
   }'
 }
 
-# i/o ratio: red below IO_RATIO_ORANGE, orange to IO_RATIO_GREEN, green to IO_RATIO_GOLD, then gold; empty if no data
+# i/o ratio: red below IO_RATIO_ORANGE, orange to IO_RATIO_GREEN, green to IO_RATIO_OVERSIZED,
+# then orange (oversized context); empty if no data
 _io_ratio_color() {
   awk -v i="${1:-0}" -v cr="${2:-0}" -v o="${3:-0}" \
-      -v og="$IO_RATIO_ORANGE" -v gr="$IO_RATIO_GREEN" -v gd="$IO_RATIO_GOLD" 'BEGIN {
+      -v og="$IO_RATIO_ORANGE" -v gr="$IO_RATIO_GREEN" -v ov="$IO_RATIO_OVERSIZED" 'BEGIN {
     if (o == 0) exit
     r = (i + cr) / o
-    if (r >= gd) print "#FFD700"
+    if (r >= ov) print "orange"
     else if (r >= gr) print "#34C759"
     else if (r >= og) print "orange"
     else print "red"
