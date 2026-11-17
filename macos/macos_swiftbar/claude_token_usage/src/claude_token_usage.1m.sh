@@ -14,8 +14,6 @@ PRICE_DIR="$BASE_DIR/price"
 DATA_DIR="$BASE_DIR/data"
 PRICE_JSON="$PRICE_DIR/model_prices_and_context_window.json"
 PRICE_CSV="$PRICE_DIR/claude_model_prices.csv"
-ROLLING_CSV="$DATA_DIR/rolling_metrics_7_days.csv"
-ROLLING_HEADER="date,total_input_count,total_input_cost,total_cache_created_count,total_cache_created_cost,total_cache_read_count,total_cache_read_cost,total_output_count,total_output_cost"
 LOG="$DATA_DIR/widget.log"
 SF="| font=Menlo size=11 trim=false"
 
@@ -49,27 +47,18 @@ mkdir -p "$PRICE_DIR" "$DATA_DIR"
 
 # ── pricing ───────────────────────────────────────────────────────────────────
 
+# Refresh claude_model_prices.csv when it is older than 24 hours. On failure the
+# existing CSV is kept; main reports an error only when no CSV exists.
 fetch_pricing_if_stale() {
-  local needs_update=0
-  if [ ! -f "$PRICE_JSON" ]; then
-    needs_update=1
-  else
-    local now mtime
-    now=$(date +%s)
-    mtime=$(stat -f %m "$PRICE_JSON")
-    [ $(( now - mtime )) -gt 86400 ] && needs_update=1
+  if [ -s "$PRICE_CSV" ] && [ $(( $(date +%s) - $(stat -f %m "$PRICE_CSV") )) -le 86400 ]; then
+    return 0
   fi
-  [ -f "$PRICE_JSON" ] && [ ! -s "$PRICE_CSV" ] && needs_update=1
-  [ "$needs_update" -eq 0 ] && return 0
 
-  local tmp_json="$PRICE_JSON.tmp"
   curl -sL --max-time 10 \
     "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json" \
-    -o "$tmp_json" 2>>"$LOG" \
-    || { echo "$(date): curl failed" >> "$LOG"; rm -f "$tmp_json"; return 1; }
-  mv "$tmp_json" "$PRICE_JSON"
+    -o "$PRICE_JSON" 2>>"$LOG" \
+    || { echo "$(date): curl failed" >> "$LOG"; rm -f "$PRICE_JSON"; return 0; }
 
-  rm -f "$PRICE_CSV"
   jq -r '
     to_entries[]
     | select(.key | startswith("claude"))
@@ -79,7 +68,10 @@ fetch_pricing_if_stale() {
        (.value.input_cost_per_token // 0),
        (.value.output_cost_per_token // 0)]
     | @csv
-  ' "$PRICE_JSON" > "$PRICE_CSV" 2>>"$LOG" || { rm -f "$PRICE_CSV"; return 1; }
+  ' "$PRICE_JSON" > "$PRICE_CSV.tmp" 2>>"$LOG" && [ -s "$PRICE_CSV.tmp" ] \
+    && mv "$PRICE_CSV.tmp" "$PRICE_CSV" \
+    || echo "$(date): price parse failed" >> "$LOG"
+  rm -f "$PRICE_JSON" "$PRICE_CSV.tmp"
 }
 
 # ── ccusage ───────────────────────────────────────────────────────────────────
@@ -100,15 +92,16 @@ fetch_ccusage_for_range() {
            (.cacheCreationTokens // 0),
            (.cacheReadTokens // 0)]
         | @tsv
-      ' 2>/dev/null || true
+      '
 }
 
 # ── cost calculation ──────────────────────────────────────────────────────────
 
-# _calc_metrics_from_range_tsv — reads TSV from stdin (date as first field)
-# outputs one CSV row per date: YYYY-MM-DD,in_count,in_cost,cc_count,cc_cost,...
+# _calc_metrics_from_range_tsv <dates> — reads TSV from stdin (date as first field)
+# <dates> is a space separated YYYYMMDD list, newest first
+# outputs one CSV row per listed date: YYYY-MM-DD,in_count,in_cost,cc_count,cc_cost,...
 _calc_metrics_from_range_tsv() {
-  awk -F'\t' -v price_csv="$PRICE_CSV" -v logf="$LOG" '
+  awk -F'\t' -v price_csv="$PRICE_CSV" -v logf="$LOG" -v dates="$1" '
     BEGIN {
       while ((getline line < price_csv) > 0) {
         n = split(line, f, ",")
@@ -139,7 +132,9 @@ _calc_metrics_from_range_tsv() {
       to[date]  += ot;  toc[date]  += ot  * (k != "" ? p_out[k] : 0)
     }
     END {
-      for (date in ti) {
+      n = split(dates, D, " ")
+      for (i = 1; i <= n; i++) {
+        date = D[i]
         d_csv = substr(date,1,4) "-" substr(date,5,2) "-" substr(date,7,2)
         printf "%s,%d,%.10f,%d,%.10f,%d,%.10f,%d,%.10f\n",
           d_csv, ti[date], tic[date], tcc[date], tccc[date],
@@ -149,85 +144,27 @@ _calc_metrics_from_range_tsv() {
   '
 }
 
-# ── rolling CSV ───────────────────────────────────────────────────────────────
-
-yyyymmdd_to_csv_date() { printf '%s-%s-%s' "${1:0:4}" "${1:4:2}" "${1:6:2}"; }
-zero_row() { echo "${1},0,0.0000000000,0,0.0000000000,0,0.0000000000,0,0.0000000000"; }
-
-update_rolling_csv() {
-  local i d d_csv row tmp cached_today fresh_row range_tsv all_fresh
-  local fetch_since fetch_today csv_exists=0
-  tmp="$ROLLING_CSV.tmp"
-  fetch_today=$(date +%Y%m%d)
-  fetch_since="$fetch_today"  # default: today only
-  [ -f "$ROLLING_CSV" ] && csv_exists=1
-
-  # Extend fetch range back to the oldest missing past day
-  for i in 1 2 3 4 5 6; do
-    d=$(date -v-"${i}"d +%Y%m%d)
-    d_csv=$(yyyymmdd_to_csv_date "$d")
-    if [ "$csv_exists" -eq 0 ] || ! grep -q "^${d_csv}," "$ROLLING_CSV" 2>/dev/null; then
-      fetch_since="$d"
-    fi
-  done
-
-  echo "$ROLLING_HEADER" > "$tmp"
-
-  all_fresh=""
-  range_tsv=$(fetch_ccusage_for_range "$fetch_since" "$fetch_today")
-  [ -n "$range_tsv" ] && all_fresh=$(printf '%s\n' "$range_tsv" | _calc_metrics_from_range_tsv)
-
-  for i in 0 1 2 3 4 5 6; do
-    d=$(date -v-"${i}"d +%Y%m%d)
-    d_csv=$(yyyymmdd_to_csv_date "$d")
-
-    fresh_row=""
-    [ -n "$all_fresh" ] && fresh_row=$(printf '%s\n' "$all_fresh" | grep "^${d_csv}," 2>/dev/null || true)
-
-    if [ "$i" -eq 0 ]; then
-      cached_today=""
-      [ "$csv_exists" -eq 1 ] && cached_today=$(grep "^${d_csv}," "$ROLLING_CSV" 2>/dev/null || true)
-      if [ -n "$fresh_row" ]; then
-        echo "$fresh_row" >> "$tmp"
-      elif [ -n "$cached_today" ]; then
-        echo "$cached_today" >> "$tmp"
-      else
-        zero_row "$d_csv" >> "$tmp"
-      fi
-    else
-      row=""
-      [ "$csv_exists" -eq 1 ] && row=$(grep "^${d_csv}," "$ROLLING_CSV" 2>/dev/null || true)
-      if [ -n "$row" ]; then
-        echo "$row" >> "$tmp"
-      elif [ -n "$fresh_row" ]; then
-        echo "$fresh_row" >> "$tmp"
-      else
-        zero_row "$d_csv" >> "$tmp"
-      fi
-    fi
-  done
-
-  mv "$tmp" "$ROLLING_CSV"
-}
-
 # ── read metrics ──────────────────────────────────────────────────────────────
 
-read_rolling_metrics() {
+# read_metrics — sets TODAY_* and WEEK_* counts, costs, TOK and COST from $ROWS
+read_metrics() {
   local data
-  data=$(tail -n +2 "$ROLLING_CSV" | awk -F',' '
-    NR==1 { today=$0 }
-    { s2+=$2+0; s3+=$3+0; s4+=$4+0; s5+=$5+0
-      s6+=$6+0; s7+=$7+0; s8+=$8+0; s9+=$9+0 }
+  data=$(printf '%s\n' "$ROWS" | awk -F',' '
+    NR==1 { for (i = 2; i <= 9; i++) t[i] = $i }
+    { for (i = 2; i <= 9; i++) w[i] += $i }
     END {
-      print today
-      printf "%d,%.10f,%d,%.10f,%d,%.10f,%d,%.10f\n",
-        s2, s3, s4, s5, s6, s7, s8, s9
+      printf "%d %.10f %d %.10f %d %.10f %d %.10f %d %.10f\n",
+        t[2], t[3], t[4], t[5], t[6], t[7], t[8], t[9],
+        t[2]+t[4]+t[6]+t[8], t[3]+t[5]+t[7]+t[9]
+      printf "%d %.10f %d %.10f %d %.10f %d %.10f %d %.10f\n",
+        w[2], w[3], w[4], w[5], w[6], w[7], w[8], w[9],
+        w[2]+w[4]+w[6]+w[8], w[3]+w[5]+w[7]+w[9]
     }
   ')
-  IFS=',' read -r _ TODAY_IN_C TODAY_IN_COST TODAY_CC_C TODAY_CC_COST \
-                     TODAY_CR_C TODAY_CR_COST TODAY_OUT_C TODAY_OUT_COST <<< "${data%%$'\n'*}"
-  IFS=',' read -r WEEK_IN_C WEEK_IN_COST WEEK_CC_C WEEK_CC_COST \
-                  WEEK_CR_C WEEK_CR_COST WEEK_OUT_C WEEK_OUT_COST <<< "${data##*$'\n'}"
+  read -r TODAY_IN_C TODAY_IN_COST TODAY_CC_C TODAY_CC_COST \
+          TODAY_CR_C TODAY_CR_COST TODAY_OUT_C TODAY_OUT_COST TODAY_TOK TODAY_COST <<< "${data%%$'\n'*}"
+  read -r WEEK_IN_C WEEK_IN_COST WEEK_CC_C WEEK_CC_COST \
+          WEEK_CR_C WEEK_CR_COST WEEK_OUT_C WEEK_OUT_COST WEEK_TOK WEEK_COST <<< "${data##*$'\n'}"
 }
 
 # ── formatting ────────────────────────────────────────────────────────────────
@@ -235,29 +172,13 @@ read_rolling_metrics() {
 max_len() { local m=0 l; for l in "$@"; do [ "${#l}" -gt "$m" ] && m="${#l}"; done; echo "$m"; }
 
 format_k() {
-  awk -v n="${1:-0}" "$_AWK_COMMIFY"'
-    BEGIN {
-      if (n >= 1000000) {
-        v = n / 1000000
-        ip = int(v); dp = int((v - ip) * 10 + 0.5)
-        if (dp >= 10) { ip++; dp = 0 }
-        printf "%s.%dm", commify(ip), dp
-      } else if (n >= 500) {
-        v = int(n / 1000 + 0.5)
-        printf "%sk", commify(v)
-      } else {
-        printf "%d", int(n)
-      }
-    }'
+  awk -v n="${1:-0}" "$_AWK_COMMIFY$_AWK_FORMAT"'
+    BEGIN { printf "%s", fmt_k(n) }'
 }
 
 format_cost() {
-  awk -v v="${1:-0}" "$_AWK_COMMIFY"'
-    BEGIN {
-      d = int(v); c = int((v - d) * 100 + 0.5)
-      if (c >= 100) { d++; c = 0 }
-      printf "$%s.%02d", commify(d), c
-    }'
+  awk -v v="${1:-0}" "$_AWK_COMMIFY$_AWK_FORMAT"'
+    BEGIN { printf "%s", fmt_cost(v) }'
 }
 
 format_hit_rate() {
@@ -286,7 +207,7 @@ _hit_rate_color() {
   }'
 }
 
-# i/o ratio: <5 red, 5-10 green, >10 orange; empty if no data
+# i/o ratio: <20 red, 20-50 orange, 50-300 green, ≥300 gold; empty if no data
 _io_ratio_color() {
   awk -v i="${1:-0}" -v cr="${2:-0}" -v o="${3:-0}" 'BEGIN {
     if (o == 0) exit
@@ -302,7 +223,7 @@ _io_ratio_color() {
 
 render_bar_chart() {
   local SF_CHART="$SF color=#B7470A"
-  tail -n +2 "$ROLLING_CSV" | awk -F',' -v w=20 -v sf="$SF_CHART" "$_AWK_COMMIFY$_AWK_FORMAT"'
+  printf '%s\n' "$ROWS" | awk -F',' -v w=20 -v sf="$SF_CHART" "$_AWK_COMMIFY$_AWK_FORMAT"'
     {
       rows[NR] = $1
       tok[NR]  = $2+0+$4+0+$6+0+$8+0
@@ -338,52 +259,50 @@ render_dropdown() {
   echo "---"
 
   local c1=13
+  local fmt='%-*s   %-*s   %-*s %s\n'
+  local SF_TOKEN_COUNT="$SF color=#1F5C99"
+  local SF_TOTAL="$SF color=#B7470A"
 
-  # Pre-compute all token and cost labels
-  local tk_cr_t tk_cc_t tk_in_t tk_out_t tk_tot_t
-  local tk_cr_w tk_cc_w tk_in_w tk_out_w tk_tot_w
-  tk_cr_t=$(format_k "${TODAY_CR_C:-0}");  tk_cr_w=$(format_k "${WEEK_CR_C:-0}")
-  tk_cc_t=$(format_k "${TODAY_CC_C:-0}");  tk_cc_w=$(format_k "${WEEK_CC_C:-0}")
-  tk_in_t=$(format_k "${TODAY_IN_C:-0}");  tk_in_w=$(format_k "${WEEK_IN_C:-0}")
-  tk_out_t=$(format_k "${TODAY_OUT_C:-0}"); tk_out_w=$(format_k "${WEEK_OUT_C:-0}")
-  tk_tot_t=$(format_k "$TODAY_TOK");        tk_tot_w=$(format_k "$WEEK_TOK")
+  local names=("Total" "Cache read" "Cache create" "Input token" "Output token")
+  local tok_t=("$TODAY_TOK" "$TODAY_CR_C" "$TODAY_CC_C" "$TODAY_IN_C" "$TODAY_OUT_C")
+  local tok_w=("$WEEK_TOK"  "$WEEK_CR_C"  "$WEEK_CC_C"  "$WEEK_IN_C"  "$WEEK_OUT_C")
+  local cost_t=("$TODAY_COST" "$TODAY_CR_COST" "$TODAY_CC_COST" "$TODAY_IN_COST" "$TODAY_OUT_COST")
+  local cost_w=("$WEEK_COST"  "$WEEK_CR_COST"  "$WEEK_CC_COST"  "$WEEK_IN_COST"  "$WEEK_OUT_COST")
 
-  local ck_cr_t ck_cc_t ck_in_t ck_out_t ck_tot_t
-  local ck_cr_w ck_cc_w ck_in_w ck_out_w ck_tot_w
-  ck_cr_t=$(format_cost "${TODAY_CR_COST:-0}");  ck_cr_w=$(format_cost "${WEEK_CR_COST:-0}")
-  ck_cc_t=$(format_cost "${TODAY_CC_COST:-0}");  ck_cc_w=$(format_cost "${WEEK_CC_COST:-0}")
-  ck_in_t=$(format_cost "${TODAY_IN_COST:-0}");  ck_in_w=$(format_cost "${WEEK_IN_COST:-0}")
-  ck_out_t=$(format_cost "${TODAY_OUT_COST:-0}"); ck_out_w=$(format_cost "${WEEK_OUT_COST:-0}")
-  ck_tot_t=$(format_cost "$TODAY_COST");          ck_tot_w=$(format_cost "$WEEK_COST")
+  local i lk_t=() lk_w=() lc_t=() lc_w=()
+  for i in 0 1 2 3 4; do
+    lk_t[i]=$(format_k "${tok_t[i]}");    lk_w[i]=$(format_k "${tok_w[i]}")
+    lc_t[i]=$(format_cost "${cost_t[i]}"); lc_w[i]=$(format_cost "${cost_w[i]}")
+  done
 
   local max_t max_w max_ct max_cw
-  max_t=$(max_len  "$tk_cr_t" "$tk_cc_t" "$tk_in_t" "$tk_out_t" "$tk_tot_t")
-  max_w=$(max_len  "$tk_cr_w" "$tk_cc_w" "$tk_in_w" "$tk_out_w" "$tk_tot_w")
-  max_ct=$(max_len "$ck_cr_t" "$ck_cc_t" "$ck_in_t" "$ck_out_t" "$ck_tot_t")
-  max_cw=$(max_len "$ck_cr_w" "$ck_cc_w" "$ck_in_w" "$ck_out_w" "$ck_tot_w")
+  max_t=$(max_len  "${lk_t[@]}")
+  max_w=$(max_len  "${lk_w[@]}")
+  max_ct=$(max_len "${lc_t[@]}")
+  max_cw=$(max_len "${lc_w[@]}")
 
   local c2=$(( max_t + 3 + max_ct ))
   local c3=$(( max_w + 3 + max_cw ))
 
-  local fmt='%-*s   %-*s   %-*s %s\n'
-  local SF_TOKEN_COUNT="$SF color=#1F5C99"
-  local SF_TOTAL="$SF color=#B7470A"
-  printf "$fmt" "$c1" ""             "$c2" "Today"                                                   "$c3" "Last 7 Days"                                                    "$SF"
-  printf "$fmt" "$c1" "Total"        "$c2" "$(printf "%-${max_t}s" "$tk_tot_t") ($ck_tot_t)" "$c3" "$(printf "%-${max_w}s" "$tk_tot_w") ($ck_tot_w)" "$SF_TOTAL"
-  printf "$fmt" "$c1" "Cache read"   "$c2" "$(printf "%-${max_t}s" "$tk_cr_t") ($ck_cr_t)"   "$c3" "$(printf "%-${max_w}s" "$tk_cr_w") ($ck_cr_w)"   "$SF_TOKEN_COUNT"
-  printf "$fmt" "$c1" "Cache create" "$c2" "$(printf "%-${max_t}s" "$tk_cc_t") ($ck_cc_t)"   "$c3" "$(printf "%-${max_w}s" "$tk_cc_w") ($ck_cc_w)"   "$SF_TOKEN_COUNT"
-  printf "$fmt" "$c1" "Input token"  "$c2" "$(printf "%-${max_t}s" "$tk_in_t") ($ck_in_t)"   "$c3" "$(printf "%-${max_w}s" "$tk_in_w") ($ck_in_w)"   "$SF_TOKEN_COUNT"
-  printf "$fmt" "$c1" "Output token" "$c2" "$(printf "%-${max_t}s" "$tk_out_t") ($ck_out_t)" "$c3" "$(printf "%-${max_w}s" "$tk_out_w") ($ck_out_w)" "$SF_TOKEN_COUNT"
+  printf "$fmt" "$c1" "" "$c2" "Today" "$c3" "Last 7 Days" "$SF"
+  local sf
+  for i in 0 1 2 3 4; do
+    sf="$SF_TOKEN_COUNT"
+    [ "$i" -eq 0 ] && sf="$SF_TOTAL"
+    printf "$fmt" "$c1" "${names[i]}" \
+      "$c2" "$(printf "%-${max_t}s" "${lk_t[i]}") (${lc_t[i]})" \
+      "$c3" "$(printf "%-${max_w}s" "${lk_w[i]}") (${lc_w[i]})" "$sf"
+  done
   echo "---"
 
   local eff_chr_t eff_chr_w eff_ior_t eff_ior_w
-  eff_chr_t=$(format_hit_rate "${TODAY_CR_C:-0}" "${TODAY_CC_C:-0}")
-  eff_chr_w=$(format_hit_rate "${WEEK_CR_C:-0}"  "${WEEK_CC_C:-0}")
-  eff_ior_t=$(format_io_ratio "${TODAY_IN_C:-0}" "${TODAY_CR_C:-0}" "${TODAY_OUT_C:-0}")
-  eff_ior_w=$(format_io_ratio "${WEEK_IN_C:-0}"  "${WEEK_CR_C:-0}" "${WEEK_OUT_C:-0}")
+  eff_chr_t=$(format_hit_rate "$TODAY_CR_C" "$TODAY_CC_C")
+  eff_chr_w=$(format_hit_rate "$WEEK_CR_C"  "$WEEK_CC_C")
+  eff_ior_t=$(format_io_ratio "$TODAY_IN_C" "$TODAY_CR_C" "$TODAY_OUT_C")
+  eff_ior_w=$(format_io_ratio "$WEEK_IN_C"  "$WEEK_CR_C"  "$WEEK_OUT_C")
   local chr_color ior_color chr_sf ior_sf
-  chr_color=$(_hit_rate_color "${TODAY_CR_C:-0}" "${TODAY_CC_C:-0}")
-  ior_color=$(_io_ratio_color "${TODAY_IN_C:-0}" "${TODAY_CR_C:-0}" "${TODAY_OUT_C:-0}")
+  chr_color=$(_hit_rate_color "$TODAY_CR_C" "$TODAY_CC_C")
+  ior_color=$(_io_ratio_color "$TODAY_IN_C" "$TODAY_CR_C" "$TODAY_OUT_C")
   chr_sf="$SF${chr_color:+ color=$chr_color}"
   ior_sf="$SF${ior_color:+ color=$ior_color}"
   printf "$fmt" "$c1" "Cache hit"  "$c2" "$eff_chr_t" "$c3" "$eff_chr_w" "$chr_sf"
@@ -393,39 +312,23 @@ render_dropdown() {
 # ── main ──────────────────────────────────────────────────────────────────────
 
 main() {
-  if ! fetch_pricing_if_stale; then
+  fetch_pricing_if_stale
+  if [ ! -s "$PRICE_CSV" ]; then
     echo "Pricing data unavailable"
     echo "---"
     echo "Failed to download or parse pricing data. Check $LOG"
     exit 0
   fi
 
-  if [ ! -f "$PRICE_CSV" ] || [ ! -s "$PRICE_CSV" ]; then
-    echo "Pricing data unavailable"
-    echo "---"
-    echo "claude_model_prices.csv is missing or empty"
-    exit 0
-  fi
+  local dates i tsv
+  dates=$(date +%Y%m%d)
+  for i in 1 2 3 4 5 6; do dates="$dates $(date -v-"${i}"d +%Y%m%d)"; done
 
-  update_rolling_csv || { echo "Data update failed"; echo "---"; echo "Check $LOG"; exit 0; }
+  tsv=$(fetch_ccusage_for_range "${dates##* }" "${dates%% *}") \
+    || { echo "Data update failed"; echo "---"; echo "Check $LOG"; exit 0; }
+  ROWS=$(printf '%s\n' "$tsv" | _calc_metrics_from_range_tsv "$dates")
 
-  read_rolling_metrics
-  local cost_pair
-  cost_pair=$(awk -v ta="${TODAY_CC_COST:-0}" -v tb="${TODAY_CR_COST:-0}" \
-                  -v tc="${TODAY_IN_COST:-0}" -v td="${TODAY_OUT_COST:-0}" \
-                  -v wa="${WEEK_CC_COST:-0}"  -v wb="${WEEK_CR_COST:-0}" \
-                  -v wc="${WEEK_IN_COST:-0}"  -v wd="${WEEK_OUT_COST:-0}" \
-                  'BEGIN{printf "%.10f %.10f", ta+tb+tc+td, wa+wb+wc+wd}')
-  TODAY_COST="${cost_pair% *}"
-  WEEK_COST="${cost_pair#* }"
-  local tok_pair
-  tok_pair=$(awk -v ta="${TODAY_CC_C:-0}" -v tb="${TODAY_CR_C:-0}" \
-                 -v tc="${TODAY_IN_C:-0}" -v td="${TODAY_OUT_C:-0}" \
-                 -v wa="${WEEK_CC_C:-0}"  -v wb="${WEEK_CR_C:-0}" \
-                 -v wc="${WEEK_IN_C:-0}"  -v wd="${WEEK_OUT_C:-0}" \
-                 'BEGIN{printf "%d %d", ta+tb+tc+td, wa+wb+wc+wd}')
-  TODAY_TOK="${tok_pair% *}"
-  WEEK_TOK="${tok_pair#* }"
+  read_metrics
   render_menu_bar
   echo "---"
   render_dropdown
