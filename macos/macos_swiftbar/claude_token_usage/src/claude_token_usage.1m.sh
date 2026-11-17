@@ -108,7 +108,7 @@ fetch_ccusage_for_range() {
 # _calc_metrics_from_range_tsv — reads TSV from stdin (date as first field)
 # outputs one CSV row per date: YYYY-MM-DD,in_count,in_cost,cc_count,cc_cost,...
 _calc_metrics_from_range_tsv() {
-  awk -F'\t' -v price_csv="$PRICE_CSV" -v log="$LOG" '
+  awk -F'\t' -v price_csv="$PRICE_CSV" -v logf="$LOG" '
     BEGIN {
       while ((getline line < price_csv) > 0) {
         n = split(line, f, ",")
@@ -124,11 +124,19 @@ _calc_metrics_from_range_tsv() {
     }
     NF == 6 {
       date=$1; m=$2; it=$3+0; ot=$4+0; cct=$5+0; crt=$6+0
-      if (!(m in p_in) && !(m in warned)) { print "Warning: model " m " not found in pricing" >> log; warned[m]=1 }
-      ti[date]   += it;  tic[date]  += it  * (m in p_in  ? p_in[m]  : 0)
-      tcc[date]  += cct; tccc[date] += cct * (m in p_cc  ? p_cc[m]  : 0)
-      tcr[date]  += crt; tcrc[date] += crt * (m in p_cr  ? p_cr[m]  : 0)
-      to[date]  += ot;  toc[date]  += ot  * (m in p_out ? p_out[m] : 0)
+      if (!(m in res)) {
+        k = ""
+        if (m in p_in) k = m
+        else for (c in p_in) if (length(c) > length(k) && index(m, c) == 1) k = c
+        res[m] = k
+        if (k == "") print "Warning: model " m " not found in pricing" >> logf
+        else if (k != m) print "Priced by prefix: " m " -> " k >> logf
+      }
+      k = res[m]
+      ti[date]   += it;  tic[date]  += it  * (k != "" ? p_in[k]  : 0)
+      tcc[date]  += cct; tccc[date] += cct * (k != "" ? p_cc[k]  : 0)
+      tcr[date]  += crt; tcrc[date] += crt * (k != "" ? p_cr[k]  : 0)
+      to[date]  += ot;  toc[date]  += ot  * (k != "" ? p_out[k] : 0)
     }
     END {
       for (date in ti) {
