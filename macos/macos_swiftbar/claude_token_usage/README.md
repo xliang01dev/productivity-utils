@@ -108,6 +108,7 @@ Tunable values are variables in the `# ── config ──` section at the top 
 | `PRICE_URL` | litellm price list | Source of model prices |
 | `HIT_RATE_ORANGE`, `HIT_RATE_GREEN` | `70`, `90` | Cache hit rate percent where the color turns orange and green |
 | `IO_RATIO_ORANGE`, `IO_RATIO_GREEN`, `IO_RATIO_OVERSIZED` | `50`, `100`, `300` | I/O ratio where the color turns orange, green, and back to orange for an oversized context |
+| `COLOR_GREEN`, `COLOR_ORANGE`, `COLOR_RED` | `#34C759`, `orange`, `red` | Colors shared by the cache hit rate and I/O ratio rows |
 
 ## Metrics Goals
 

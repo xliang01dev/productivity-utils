@@ -20,6 +20,9 @@ HIT_RATE_GREEN=90     # cache hit rate percent: from here green
 IO_RATIO_ORANGE=50    # I/O ratio: below red, from here orange
 IO_RATIO_GREEN=100    # I/O ratio: from here green
 IO_RATIO_OVERSIZED=300 # I/O ratio: from here orange again, the context is oversized
+COLOR_GREEN="#34C759" # shared by the cache hit rate and I/O ratio rows
+COLOR_ORANGE="orange"
+COLOR_RED="red"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BASE_DIR="${SWIFTBAR_PLUGIN_DATA_PATH:-$SCRIPT_DIR}/claude_token_usage"
@@ -209,12 +212,13 @@ format_io_ratio() {
 
 # cache hit rate: red below HIT_RATE_ORANGE, orange to HIT_RATE_GREEN, then green; empty if no data
 _hit_rate_color() {
-  awk -v cr="${1:-0}" -v cc="${2:-0}" -v og="$HIT_RATE_ORANGE" -v gr="$HIT_RATE_GREEN" 'BEGIN {
+  awk -v cr="${1:-0}" -v cc="${2:-0}" -v og="$HIT_RATE_ORANGE" -v gr="$HIT_RATE_GREEN" \
+      -v cg="$COLOR_GREEN" -v co="$COLOR_ORANGE" -v cx="$COLOR_RED" 'BEGIN {
     d = cr + cc; if (d == 0) exit
     p = (cr / d) * 100
-    if (p >= gr) print "green"
-    else if (p >= og) print "orange"
-    else print "red"
+    if (p >= gr) print cg
+    else if (p >= og) print co
+    else print cx
   }'
 }
 
@@ -222,13 +226,14 @@ _hit_rate_color() {
 # then orange (oversized context); empty if no data
 _io_ratio_color() {
   awk -v i="${1:-0}" -v cr="${2:-0}" -v o="${3:-0}" \
-      -v og="$IO_RATIO_ORANGE" -v gr="$IO_RATIO_GREEN" -v ov="$IO_RATIO_OVERSIZED" 'BEGIN {
+      -v og="$IO_RATIO_ORANGE" -v gr="$IO_RATIO_GREEN" -v ov="$IO_RATIO_OVERSIZED" \
+      -v cg="$COLOR_GREEN" -v co="$COLOR_ORANGE" -v cx="$COLOR_RED" 'BEGIN {
     if (o == 0) exit
     r = (i + cr) / o
-    if (r >= ov) print "orange"
-    else if (r >= gr) print "#34C759"
-    else if (r >= og) print "orange"
-    else print "red"
+    if (r >= ov) print co
+    else if (r >= gr) print cg
+    else if (r >= og) print co
+    else print cx
   }'
 }
 
