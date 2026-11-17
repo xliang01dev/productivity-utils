@@ -8,6 +8,19 @@
 export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
 set -euo pipefail
 
+# ── config ────────────────────────────────────────────────────────────────────
+
+DAYS=7                # days shown in the bar chart and summed in the totals column
+BAR_WIDTH=20          # width of each bar in the chart
+LABEL_WIDTH=13        # width of the label column in the dropdown
+PRICE_TTL=86400       # seconds before the price file is refreshed
+PRICE_URL="https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"
+HIT_RATE_ORANGE=40    # cache hit rate percent: below red, from here orange
+HIT_RATE_GREEN=70     # cache hit rate percent: from here green
+IO_RATIO_ORANGE=20    # I/O ratio: below red, from here orange
+IO_RATIO_GREEN=50     # I/O ratio: from here green
+IO_RATIO_GOLD=300     # I/O ratio: from here gold
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BASE_DIR="${SWIFTBAR_PLUGIN_DATA_PATH:-$SCRIPT_DIR}/claude_token_usage"
 PRICE_DIR="$BASE_DIR/price"
@@ -47,16 +60,14 @@ mkdir -p "$PRICE_DIR" "$DATA_DIR"
 
 # ── pricing ───────────────────────────────────────────────────────────────────
 
-# Refresh claude_model_prices.csv when it is older than 24 hours. On failure the
-# existing CSV is kept; main reports an error only when no CSV exists.
+# Refresh claude_model_prices.csv when it is older than PRICE_TTL seconds. On failure
+# the existing CSV is kept; main reports an error only when no CSV exists.
 fetch_pricing_if_stale() {
-  if [ -s "$PRICE_CSV" ] && [ $(( $(date +%s) - $(stat -f %m "$PRICE_CSV") )) -le 86400 ]; then
+  if [ -s "$PRICE_CSV" ] && [ $(( $(date +%s) - $(stat -f %m "$PRICE_CSV") )) -le "$PRICE_TTL" ]; then
     return 0
   fi
 
-  curl -sL --max-time 10 \
-    "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json" \
-    -o "$PRICE_JSON" 2>>"$LOG" \
+  curl -sL --max-time 10 "$PRICE_URL" -o "$PRICE_JSON" 2>>"$LOG" \
     || { echo "$(date): curl failed" >> "$LOG"; rm -f "$PRICE_JSON"; return 0; }
 
   jq -r '
@@ -196,25 +207,26 @@ format_io_ratio() {
   }'
 }
 
-# cache hit rate: <0-40% red, 40-70% orange, ≥70% green; empty if no data
+# cache hit rate: red below HIT_RATE_ORANGE, orange to HIT_RATE_GREEN, then green; empty if no data
 _hit_rate_color() {
-  awk -v cr="${1:-0}" -v cc="${2:-0}" 'BEGIN {
+  awk -v cr="${1:-0}" -v cc="${2:-0}" -v og="$HIT_RATE_ORANGE" -v gr="$HIT_RATE_GREEN" 'BEGIN {
     d = cr + cc; if (d == 0) exit
     p = (cr / d) * 100
-    if (p >= 70) print "green"
-    else if (p >= 40) print "orange"
+    if (p >= gr) print "green"
+    else if (p >= og) print "orange"
     else print "red"
   }'
 }
 
-# i/o ratio: <20 red, 20-50 orange, 50-300 green, ≥300 gold; empty if no data
+# i/o ratio: red below IO_RATIO_ORANGE, orange to IO_RATIO_GREEN, green to IO_RATIO_GOLD, then gold; empty if no data
 _io_ratio_color() {
-  awk -v i="${1:-0}" -v cr="${2:-0}" -v o="${3:-0}" 'BEGIN {
+  awk -v i="${1:-0}" -v cr="${2:-0}" -v o="${3:-0}" \
+      -v og="$IO_RATIO_ORANGE" -v gr="$IO_RATIO_GREEN" -v gd="$IO_RATIO_GOLD" 'BEGIN {
     if (o == 0) exit
     r = (i + cr) / o
-    if (r >= 300) print "#FFD700"
-    else if (r >= 50) print "#34C759"
-    else if (r >= 20) print "orange"
+    if (r >= gd) print "#FFD700"
+    else if (r >= gr) print "#34C759"
+    else if (r >= og) print "orange"
     else print "red"
   }'
 }
@@ -223,7 +235,7 @@ _io_ratio_color() {
 
 render_bar_chart() {
   local SF_CHART="$SF color=#B7470A"
-  printf '%s\n' "$ROWS" | awk -F',' -v w=20 -v sf="$SF_CHART" "$_AWK_COMMIFY$_AWK_FORMAT"'
+  printf '%s\n' "$ROWS" | awk -F',' -v w="$BAR_WIDTH" -v sf="$SF_CHART" "$_AWK_COMMIFY$_AWK_FORMAT"'
     {
       rows[NR] = $1
       tok[NR]  = $2+0+$4+0+$6+0+$8+0
@@ -258,7 +270,7 @@ render_dropdown() {
   render_bar_chart
   echo "---"
 
-  local c1=13
+  local c1="$LABEL_WIDTH"
   local fmt='%-*s   %-*s   %-*s %s\n'
   local SF_TOKEN_COUNT="$SF color=#1F5C99"
   local SF_TOTAL="$SF color=#B7470A"
@@ -284,7 +296,7 @@ render_dropdown() {
   local c2=$(( max_t + 3 + max_ct ))
   local c3=$(( max_w + 3 + max_cw ))
 
-  printf "$fmt" "$c1" "" "$c2" "Today" "$c3" "Last 7 Days" "$SF"
+  printf "$fmt" "$c1" "" "$c2" "Today" "$c3" "Last $DAYS Days" "$SF"
   local sf
   for i in 0 1 2 3 4; do
     sf="$SF_TOKEN_COUNT"
@@ -322,7 +334,7 @@ main() {
 
   local dates i tsv
   dates=$(date +%Y%m%d)
-  for i in 1 2 3 4 5 6; do dates="$dates $(date -v-"${i}"d +%Y%m%d)"; done
+  for (( i = 1; i < DAYS; i++ )); do dates="$dates $(date -v-"${i}"d +%Y%m%d)"; done
 
   tsv=$(fetch_ccusage_for_range "${dates##* }" "${dates%% *}") \
     || { echo "Data update failed"; echo "---"; echo "Check $LOG"; exit 0; }
