@@ -68,7 +68,7 @@ chmod +x setup_with_brew.sh
    # or
    ln -s "$(pwd)/src/claude_token_usage.1m.sh" ~/path/to/swiftbar/plugins/
    ```
-3. Set a plugin data directory in SwiftBar preferences (**⚡ menu → Preferences → Plugin Data Path**), or leave it unset to use the script's own directory as the default.
+3. Optionally set a plugin data directory in SwiftBar preferences (**⚡ menu → Preferences → Plugin Data Path**). SwiftBar sets `SWIFTBAR_PLUGIN_DATA_PATH` for the plugin; if it is missing, the script uses its own directory.
 4. Make sure the script is executable:
    ```bash
    chmod +x src/claude_token_usage.1m.sh
@@ -81,23 +81,45 @@ chmod +x setup_with_brew.sh
 
 On each refresh the script:
 
-1. Downloads model pricing from [litellm](https://github.com/BerriAI/litellm) (cached for 24 hours)
-2. Calls `ccusage` to fetch today's token usage by model
-3. Calculates costs by multiplying token counts against the pricing data
-4. Stores a rolling 7-day CSV in the SwiftBar plugin data directory (`$SWIFTBAR_PLUGIN_DATA_PATH/claude_token_usage/data/`), falling back to the script's own directory
-5. Renders the menu bar line and dropdown
+1. Refreshes model pricing from [litellm](https://github.com/BerriAI/litellm) when the price file is older than 24 hours. If the download fails, the last good price file is used.
+2. Calls `ccusage` once for the last 7 days and reads the per-model token counts (`modelBreakdowns`)
+3. Calculates each model's cost by multiplying its token counts against that model's price. A dated model name with no exact price (for example `claude-sonnet-5-5-20261101`) uses the longest price key that is a prefix of the name.
+4. Renders the menu bar line and dropdown
+
+Every refresh reprices all 7 days, so there is no cached history to go stale.
+
+Files are written under `$SWIFTBAR_PLUGIN_DATA_PATH/claude_token_usage/`:
+
+- `price/claude_model_prices.csv`: the Claude rows of the litellm price list
+- `data/widget.log`: download failures, models priced by prefix, and models with no price
 
 All data is local — nothing is sent anywhere beyond the pricing JSON fetch from GitHub.
 
+## Configuration
+
+Tunable values are variables in the `# ── config ──` section at the top of `src/claude_token_usage.1m.sh`:
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `DAYS` | `7` | Days shown in the chart and summed in the totals column |
+| `BAR_WIDTH` | `20` | Width of each bar in the chart |
+| `LABEL_WIDTH` | `13` | Width of the label column in the dropdown |
+| `PRICE_TTL` | `86400` | Seconds before the price file is refreshed |
+| `PRICE_URL` | litellm price list | Source of model prices |
+| `HIT_RATE_ORANGE`, `HIT_RATE_GREEN` | `40`, `70` | Cache hit rate percent where the color turns orange and green |
+| `IO_RATIO_ORANGE`, `IO_RATIO_GREEN`, `IO_RATIO_GOLD` | `20`, `50`, `300` | I/O ratio where the color turns orange, green and gold |
+
 ## Metrics Goals
 
-| Metric | Target |
-|---|---|
-| **Cache hit rate** | ≥ 90% |
-| **I/O ratio** | ≥ 100:1 |
+The dropdown colors each metric by these cutoffs, which are set in the config section.
 
-**Cache hit rate** measures what fraction of your cache-eligible tokens were served from cache rather than reprocessed. At ≥ 90%, the bulk of your context is reused across turns, which directly lowers cost — cached reads are roughly 10× cheaper than regular input tokens on most Claude models.
+| Metric | Red | Orange | Green | Gold |
+|---|---|---|---|---|
+| **Cache hit rate** | < 40% | 40% to 70% | ≥ 70% | n/a |
+| **I/O ratio** | < 20:1 | 20:1 to 50:1 | 50:1 to 300:1 | ≥ 300:1 |
 
-**I/O ratio** is (input + cache read tokens) ÷ output tokens. Output tokens are the most expensive, so a high ratio — 100:1 or above — means you're getting focused responses from a well-cached context, which is the most cost-efficient operating point. Below 50:1, output is dominating and cost rises fast.
+**Cache hit rate** measures what fraction of your cache-eligible tokens were served from cache rather than reprocessed. At ≥ 70%, the bulk of your context is reused across turns, which directly lowers cost — cached reads are 10× to 20× cheaper than regular input tokens, depending on the model.
 
-Above 300:1, the ratio flips to a different problem: the context window is oversized. You're paying for more cached input than the task needs — trimming prompts would reduce cost without sacrificing output quality.
+**I/O ratio** is (input + cache read tokens) ÷ output tokens. Output tokens are the most expensive, so a high ratio — 50:1 or above — means you're getting focused responses from a well-cached context, which is the most cost-efficient operating point. Below 20:1, output is dominating and cost rises fast.
+
+At 300:1 and above, the widget shows the ratio in gold.
